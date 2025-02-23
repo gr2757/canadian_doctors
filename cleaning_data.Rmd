@@ -1,0 +1,196 @@
+---
+title: "R Notebook"
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+
+library(dplyr)
+library(stringr)
+library(stringi)
+library(tidyr)
+
+```
+
+
+```{r}
+directory = "/Users/gr2757/Dropbox/CPSO/CPSO" #<--- enter your directory here
+input_directory = file.path(directory, "outputs")
+
+active_doctors <- read.csv(file.path(input_directory, "active_doctors_data.csv"))
+inactive_doctors <- read.csv(file.path(input_directory, "inactive_doctors_data.csv"))
+```
+
+
+this code chunk is all for the merging of the data
+```{r}
+
+inactive_doctors$cpso <- as.character(inactive_doctors$cpso) #keep both as characters to keep it simple
+active_doctors$cpso <- as.character(active_doctors$cpso)
+
+merged_data  <- bind_rows(active_doctors, inactive_doctors)  
+
+#reorganizing the column name order
+merged_data <- merged_data[, c(
+  "cpso", "name", "active_member", "expired_date", "corporation_date", "expired_corporation_date",
+  "corporation_name", "corp_address", "specialties", "specialties_2", "specialties_3", "specialties_4", "educ", "educ_year",
+  "corporate_shareholders_2", "corporate_shareholders_3", "corporate_shareholders_4", "corporate_shareholders_5",
+  setdiff(names(merged_data), c("cpso", "name", "active_member", "expired_date", "corporation_date", "expired_corporation_date",
+                                "corporation_name", "corp_address", "specialties", "specialties_2", "specialties_3",
+                                "specialties_4", "educ", "educ_year", "corporate_shareholders_2", "corporate_shareholders_3",
+                                "corporate_shareholders_4", "corporate_shareholders_5"))
+)]
+
+#savings this as a file
+write.csv(merged_data, file.path(input_directory,"all_doctors_raw.csv"), row.names = FALSE)
+
+#using this as the orginal data frame that is used later
+original_df = merged_data
+
+```
+
+
+```{r}
+#creating a pure doctors data set
+pure_doctors = original_df
+pure_doctors$educ_year <- as.character(pure_doctors$educ_year) #turn years into characters for now
+
+pure_doctors <- pure_doctors %>%
+  mutate(across(everything(), ~na_if(., ""))) #turn blankspace into NA
+
+# Get all column names
+all_columns <- names(pure_doctors)
+# Define the columns
+desired_columns <- c(
+  "cpso", "name", "expired_date", "active_member", "corporation_date", "expired_corporation_date", "corporation_name", "specialties", "specialties_2", "corp_address", "educ_year", "gender",   "corporate_shareholders", paste0("corporate_shareholders_", 2:51) # generates "corporate_shareholders_1" to "corporate_shareholders_33"
+)
+
+#trim down the data
+existing_columns <- desired_columns[desired_columns %in% all_columns]
+pure_doctors <- pure_doctors %>%
+  select(all_of(existing_columns))
+
+#rename the first one to match the rest
+pure_doctors <- pure_doctors %>%
+  rename(
+    corporate_shareholders_1 = corporate_shareholders
+  )
+
+#count shareholders and remove extra columns after
+pure_doctors <- pure_doctors %>%
+  mutate(shareholder_count = rowSums(!is.na(select(., starts_with("corporate_shareholders_"))))) %>%
+  select(-starts_with("corporate_shareholders_"))
+
+#make a dummy variable for active status
+pure_doctors <- pure_doctors %>%
+  mutate(active = ifelse(!is.na(active_member), 1, 0))
+
+#make a dummy variable for inactive status
+pure_doctors <- pure_doctors %>%
+  mutate(inactive = ifelse(!is.na(expired_date), 1, 0))
+
+# Define the regex pattern for Canadian postal codes
+postal_code_pattern <- "[A-Za-z]\\d[A-Za-z] \\d[A-Za-z]\\d"
+# Extract postal codes using str_extract
+pure_doctors <- pure_doctors %>%
+  mutate(corp_zipcode = str_extract(corp_address, postal_code_pattern)) %>%
+  select(-corp_address)
+
+#clean up
+rm(all_columns)
+rm(existing_columns)
+rm(desired_columns)
+```
+
+
+this is to make a corporation data frame
+```{r}
+#making pure corporations
+pure_corporations <- original_df
+
+#generating a list of unique names
+unique_corporation_names <- unique(pure_corporations$corporation_name)
+
+#generate unique id
+set.seed(123)
+generate_unique_id <- function(n) {
+  stri_rand_strings(n, 6, pattern = "[A-Z0-9]")
+}
+
+#adding unique ID column
+pure_corporations <- data.frame(
+  corporation_name = unique_corporation_names,
+  unique_id = generate_unique_id(length(unique_corporation_names))
+)
+
+rm(unique_corporation_names) #remove unique corporations to clean up
+
+pure_corporations <- pure_corporations %>%
+  filter(!is.na(corporation_name))
+
+#grabbing the first date of corporations and taking unique corp names by earlier date
+first_date_active <- pure_doctors %>%
+  group_by(corporation_name) %>%
+  filter(corporation_date == min(corporation_date)) %>%
+  slice(1) %>%  # In case of ties, keep the first occurrence for corporation_date
+  ungroup()
+
+#adding postal codes, if there are more than one for a corp name, the earliest is applied
+pure_corporations <- pure_corporations %>%
+  left_join(first_date_active %>% select(corporation_name, corp_zipcode, corporation_date), by = "corporation_name")
+
+#all duplicates of corporation names expired at the same data
+first_date_inactive <- pure_doctors %>%
+  group_by(corporation_name) %>%
+  slice(1) %>%  # In case of ties, keep the first occurrence for corporation_date
+  ungroup()
+
+#add expired dates by corporation name
+pure_corporations <- pure_corporations %>%
+  left_join(first_date_inactive %>% select(corporation_name, expired_corporation_date), by = "corporation_name")
+
+#clean up
+rm(first_date_active)
+rm(first_date_inactive)
+
+```
+
+Making shareholders df
+```{r}
+#attaching unique ID by name to the original data frame to create pure shareholders
+pure_shareholder <- original_df %>%
+  left_join(pure_corporations %>% select(corporation_name, unique_id), by = "corporation_name") %>%
+  select(unique_id, everything()) %>%
+  select(cpso, name, corporation_date, unique_id, corporation_name, expired_corporation_date) %>%
+  filter(!is.na(unique_id))
+
+#renaming
+pure_shareholder <- pure_shareholder %>%
+  rename(date_joined = corporation_date) %>%
+  rename(date_expired = expired_corporation_date)
+
+#counting how many shareholders in a company
+shareholder_count <- pure_shareholder %>%
+  group_by(unique_id) %>%
+  summarise(count = n(), .groups = "drop")
+#merging
+pure_shareholder <- pure_shareholder %>%
+  left_join(shareholder_count, by = "unique_id")
+
+#cleaning environment 
+rm(shareholder_count)
+```
+
+
+Writing files
+```{r}
+write.csv(pure_doctors, file.path(input_directory,"clean_doctors_data.csv"), row.names = FALSE)
+write.csv(pure_corporations, file.path(input_directory,"clean_corporation_data.csv"), row.names = FALSE)
+write.csv(pure_shareholder, file.path(input_directory,"clean_shareholder_data.csv"), row.names = FALSE)
+```
+
+
+
