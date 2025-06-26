@@ -1,0 +1,716 @@
+---
+title: "Canadian Doctors Iterations 3"
+output:
+  pdf_document: default
+  html_notebook: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales)  # Load the scales package for percentage formatting
+library(knitr)
+
+if(Sys.info()['user']=='gr2757') {
+  
+  Project <- "/Users/gr2757/Dropbox/CPSO/output"
+}
+
+if(Sys.info()['user']=='T-800 Model 101') {
+  
+  Project <- "D:/Dropbox/CPSO/output"
+}
+if(Sys.info()['user']=='wojtek') {
+#    project<-"/home/wojtek/Dropbox/MyPapers/Canada-Incorporation/project_incorp/incorp_results/Results/20250206"
+}
+
+
+all_doctors_path = file.path(Project, "all_doctors_data_three.csv")
+
+all_doctors_raw = read.csv(all_doctors_path, stringsAsFactors = FALSE)
+all_doctors_raw[all_doctors_raw == ""] <- NA
+
+#setwd("D:/Dropbox/CPSO/graphing")
+
+```
+
+```{r}
+#keeping these columns
+
+#print(colnames(all_doctors_raw))
+all_doctors = subset(all_doctors_raw, select = c("cpso", "name", "active_member", "corporation_date_1", "expired_date", "left_corporation_1", "expired_corporation_date_1",  "specialties_1", "specialties_2", "specialties_3", "specialties_4", "educ", "educ_year"))
+
+all_doctors = all_doctors %>%
+  rename("corporation_date" = "corporation_date_1") %>%
+  rename("expired_corporation_date" = "expired_corporation_date_1") %>%
+  rename("specialties" = "specialties_1") %>%
+  rename("left_corporation" = "left_corporation_1")
+
+print(colnames(all_doctors))
+
+#make blank into NA
+all_doctors[all_doctors == ""] <- NA
+
+print(sum(is.na(all_doctors$active_member)))
+print(sum(is.na(all_doctors$expired_date)))
+
+
+
+#create a count column
+all_doctors = all_doctors %>%
+  mutate(specialties_count = rowSums(!is.na(across(starts_with("specialties")))))
+
+```
+
+```{r}
+#plot of specialties count
+ggplot(all_doctors, aes(x = specialties_count)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +  # Add labels above bars
+  labs(title = "Number of Specialties per Doctor", x = "Number of Specialties", y = "Count of Doctors") +
+  theme_minimal()
+```
+Zero is NA effectively. 
+
+```{r}
+
+# adding is_incorp column
+all_doctors <- all_doctors %>%
+  mutate(is_incorp = ifelse(!is.na(corporation_date) | !is.na(expired_corporation_date), 1, 0))
+
+#only looking at doctors with listed specialties
+with_specialties <- all_doctors %>%
+  filter(specialties_count > 0) %>%
+  mutate(specialties = gsub("and", "&", specialties, ignore.case = TRUE))
+
+incorp_counts <- with_specialties %>%
+  filter(is_incorp == 1) %>%
+  count(specialties, name = "count") %>%
+  arrange(desc(count)) %>%
+  slice_max(count, n = 30)  # Keep top 30 specialties
+
+
+ggplot(incorp_counts, aes(x = reorder(specialties, count), y = count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(aes(label = count), hjust = -.03, size = 3, nudge_y = .5) +  # Adjust text size
+  coord_flip() +
+  labs(title = "Top 30 Specialties with Incorporated Doctors",
+       x = "Specialty",
+       y = "Number of Incorporated Doctors") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(margin = margin(r = -15)))  # Adjust right margin for y-axis labels
+
+```
+Family Medicine count is cut off, the value is 8,428
+
+```{r}
+# all doctors with specialties
+
+all_specialties_count <- all_doctors %>%
+  filter(specialties_count > 0) %>%
+  mutate(specialties = gsub("and", "&", specialties, ignore.case = TRUE)) %>%
+  count(specialties, name = "count") %>%
+  arrange(desc(count)) %>%
+  slice_max(count, n = 30)  # Keep top 30 specialties
+
+ggplot(all_specialties_count, aes(x = reorder(specialties, count), y = count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(aes(label = count), hjust = -.03, size = 3, nudge_y = .5) +  # Adjust text size
+  coord_flip() +
+  labs(title = "Top 30 Specialties (All Doctors)",
+       x = "Specialty",
+       y = "Number of Doctors") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(margin = margin(r = -15)))  # Adjust right margin for y-axis labels
+
+```
+The count for Family Medicine is 16,699. It seems that the top 30 specialties look pretty similar, incorporated or not.
+
+```{r}
+incorp_proportions <- with_specialties %>%
+  group_by(specialties) %>%
+  summarise(count_incorp = sum(is_incorp == 1), count_total = n()) %>%
+  mutate(proportion = count_incorp / count_total) %>%
+  slice_max(proportion, n = 30)  # Keep top 30 specialties by proportion
+
+# Create the bar plot for proportions
+ggplot(incorp_proportions, aes(x = reorder(specialties, proportion), y = proportion)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(aes(label = paste0(round(proportion * 100), "%")), hjust = -.05, size = 3) +  # Add rounded percentage labels
+  coord_flip() +
+  labs(title = "Top 30 Specialties by Proportion \n of Incorporated Doctors",
+       x = "Specialty",
+       y = "Proportion of Incorporated Doctors") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(margin = margin(r = 10)))
+```
+
+The top 5 specialties by proportion is due to how few doctors have these specialties. Addiction medicine, Pediatric Gastroenterology, and Cardiothoracic Surgery have 1, 1, 3 doctors practicing those specialties; they just all happen to be incorporated. Vascular surgery has 57 doctors and 28 of the are incorporated. Lastly, Family medicine has a total of 16,699 doctors, and 8,428 are incorporated. 
+
+
+
+```{r}
+#table
+incorp_proportions_table = incorp_proportions %>%
+  arrange(desc(count_total)) %>%
+  top_n(30) %>%
+  rename("num_doctors" = "count_incorp") %>%
+  rename("incorporation_rate" = "proportion") %>%
+  select(-c(count_total))
+
+incorp_proportions_table$incorporation_rate = percent(incorp_proportions_table$incorporation_rate, accuracy = .1)
+
+kable(incorp_proportions_table)
+
+```
+
+
+```{r}
+# Create a new column for the year of incorporation
+expanded_doctors = subset(all_doctors, select = -c(educ, specialties, specialties_2, specialties_3, specialties_4, specialties_count))
+
+# turning dates into just year
+expanded_doctors <- expanded_doctors %>%
+  mutate(incorp_year = as.numeric(format(as.Date(corporation_date, format = "%Y-%m-%d"), "%Y")))
+
+expanded_doctors <- expanded_doctors %>%
+  mutate(expired_year = as.numeric(format(as.Date(expired_date, format = "%Y-%m-%d"), "%Y")))
+
+expanded_doctors <- expanded_doctors %>%
+  mutate(expired_corp_year = as.numeric(format(as.Date(expired_corporation_date, format = "%Y-%m-%d"), "%Y")))
+
+expanded_doctors <- expanded_doctors %>%
+  mutate(active_year = as.numeric(format(as.Date(active_member, format = "%Y-%m-%d"), "%Y")))
+
+
+expanded_doctors <- expanded_doctors %>%
+  mutate(left_corp_year = as.numeric(format(as.Date(left_corporation, format = "%Y-%m-%d"), "%Y")))
+
+#drop true NAs
+print(paste("No good year to choose for this many rows: ", sum(is.na(all_doctors$educ_year))))
+expanded_doctors = expanded_doctors %>%
+  drop_na(educ_year)
+
+#the next best thing to when a doctor became active is when they graduated med school
+expanded_doctors = expanded_doctors %>%
+  mutate(active_year = coalesce(active_year, educ_year)) #uses educ_year if active_year is NA
+
+#drop the date columns
+expanded_doctors = subset(expanded_doctors, select = -c(corporation_date, expired_corporation_date, expired_date, active_member, left_corporation))
+
+
+#if there is value for active year, but not expired year, set expired year to 2025 (they're still active to this day)
+expanded_doctors <- expanded_doctors %>%
+  mutate(expired_year = ifelse(!is.na(active_year) & is.na(expired_year), 2025, expired_year)) #if there is active year, set expired year to 2025
+
+#if there is a value for incorp year, but not expired corp year, set expired corp year to 2025 (they're still active to this day)
+expanded_doctors <- expanded_doctors %>%
+  mutate(expired_corp_year = ifelse(!is.na(incorp_year) & is.na(expired_corp_year), 2025, expired_corp_year))
+
+print(sum(!is.na(expanded_doctors$incorp_year) & !is.na(expanded_doctors$expired_corp_year)))
+
+# Expand the dataset
+expanded_doctors <- expanded_doctors %>%
+  rowwise() %>%
+  mutate(years = list(seq(active_year, as.integer(expired_year)))) %>%  # Create a sequence of years
+  unnest(years)
+
+expanded_doctors <- expanded_doctors %>%
+  drop_na(expired_year, active_year) %>%  # Ensure necessary data is present
+  mutate(is_active_status = ifelse(years >= active_year & years <= expired_year, 1, 0)) %>% # Create a binary variable for active status (all 1)
+  mutate(is_incorp_status = ifelse(
+    is.na(incorp_year) | is.na(expired_corp_year), 0,  # If either is NA, set to 0
+    ifelse(years >= incorp_year & years <= expired_corp_year, 1, 0)  # Otherwise, apply the range condition
+  ))
+
+```
+
+
+```{r}
+incorp_over_time <- expanded_doctors %>%
+  filter(is_incorp == 1) %>%  # Keep only incorporated doctors
+  drop_na(active_year)  # Ensure necessary data is present
+
+temp_df = expanded_doctors %>%
+  filter(expired_corp_year != 2025)
+
+
+incorp_over_time_counts <- expanded_doctors %>%
+  group_by(years) %>%  # Group by year
+  summarise(total_incorp = sum(is_incorp_status, na.rm = TRUE)) %>%
+  arrange(years)  # Arrange by year for plotting
+
+
+
+# Filter the dataset to start from the selected year
+incorp_over_time_counts <- incorp_over_time_counts %>%
+  filter(years >= 2000 & years <= 2024)
+
+
+# Create the plot
+ggplot(incorp_over_time_counts, aes(x = years, y = total_incorp)) +
+  geom_line(color = "blue", linewidth = 1) +  # Line plot
+  geom_point(color = "blue") +  # Add points to the line
+  labs(title = "Number of Active Incorporated Doctors Over Time",
+       x = "Year",
+     y = "Number of Incorporated Doctors") +
+  theme_minimal()
+```
+
+I fixed the start of the graph to be 5 years before the first year of incorporation, the first incorporation was 2002 with one, and 2003 had 239 new incorporations.
+
+This graph is missing any doctors that were incorporated but are no longer active. So there is never any decrease in the number of incorporated doctors. So if a doctor was incorporated in 2005 and retired in 2020, they would have never shown up in the graph at all.
+
+```{r}
+# incorp over time as a proportion of all doctors (only active doctors per year)
+incorp_over_time_prop <- expanded_doctors %>%
+  drop_na(expired_year, active_year) %>%  # Ensure necessary data is present
+  mutate(is_incorp_status = ifelse(years >= incorp_year & years <= expired_corp_year, 1, 0))
+
+incorp_over_time_prop <- incorp_over_time_prop %>%
+  group_by(years) %>%  # Group by year
+  summarise(
+    total_incorp = sum(is_incorp_status, na.rm = TRUE),  # Count incorporated doctors
+    total_active = sum(is_active_status, na.rm = TRUE),  # Count active doctors
+    prop_incorp = total_incorp / total_active  # Compute proportion
+  ) %>%
+  arrange(years)  # Arrange by year for plotting
+  
+# Filter the dataset to start from the selected year
+incorp_over_time_prop <- incorp_over_time_prop %>%
+  filter(years >= 2000 & years <= 2024)
+
+# Create the plot
+ggplot(incorp_over_time_prop, aes(x = years, y = prop_incorp)) +
+  geom_line(color = "blue", linewidth = 1) +  # Line plot
+  geom_point(color = "blue") +  # Add points to the line
+  labs(title = "The Proportion of All Doctors That are Incorporated",
+       x = "Year",
+       y = "Percentage of Incorporated Doctors") +
+  scale_y_continuous(labels = percent) +  # Convert y-axis labels to percentages
+  theme_minimal()
+
+```
+The  doctors that are listed as inactive are missing data for when they incorporated, but do include when they corporation status expired. Doctors will either have a listed incorporation date or an expiration date for their corporation status, but not both.
+
+The problem persists of missing historic data with inactive doctors and their missing data. 
+
+
+```{r}
+# going by cohort
+
+expanded_doctors_cohort <- expanded_doctors %>%
+  drop_na(educ_year) %>%  # Ensure necessary data is present
+  mutate(cohort = cut(educ_year, 
+                      breaks = seq(1950, 2030, by = 10),  # 10-year bins
+                      labels = paste0(seq(1950, 2020, by = 10), "-", seq(1959, 2029, by = 10)),
+                      include.lowest = TRUE))
+
+
+active_doctors_cohort <- expanded_doctors_cohort %>%
+  drop_na(cohort) %>%
+  group_by(cohort, years) %>%
+  summarise(total_active = sum(is_active_status, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot total active doctors by cohort over time
+ggplot(active_doctors_cohort, aes(x = years, y = total_active, color = as.factor(cohort))) +
+  geom_line(linewidth = 1) +  # Line plot
+  geom_point() +  # Add points to the line
+  labs(
+    title = "Total Active Doctors per Cohort Over Time",
+    x = "Year",
+    y = "Total Active Doctors",
+    color = "Graduation Cohort"
+  ) +
+  theme_minimal()
+
+```
+There is data for when doctors became active, either explicitly through doctors that are active and have a listed year for when they became active or implicitly by using the year they graduated med school for inactive doctors. This is what I would expect the incorporation by cohorts to look like if there were solid start and end dates for incorporation.  
+
+
+```{r}
+expanded_doctors_cohort_counts  <- expanded_doctors_cohort %>%
+  drop_na(cohort) %>%
+  filter(years >= 2000 & years <= 2024) %>% 
+  group_by(cohort, years) %>%
+  summarise(total_incorp = sum(is_incorp_status, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot total incorporated doctors by cohort over time
+ggplot(expanded_doctors_cohort_counts, aes(x = years, y = total_incorp, color = as.factor(cohort))) +
+  geom_line(linewidth = 1) +  # Line plot
+  geom_point() +  # Add points to the line
+  labs(
+    title = "Total Incorporated Doctors per Cohort Over Time",
+    x = "Year",
+    y = "Total Incorporated Doctors",
+    color = "Graduation Cohort"
+  ) +
+  theme_minimal()
+
+
+```
+I set the graph to start in 2000, 2 years before the first incorporation. Some doctors have an incorporation date before they graduated med school, this is likely due to them joining an already incorporated practice.
+
+```{r}
+
+expanded_doctors_cohort_prop <- expanded_doctors_cohort %>%
+  group_by(cohort, years) %>%
+  summarise(
+    total_incorp = sum(is_incorp_status, na.rm = TRUE),  # Count incorporated doctors
+    total_doctors = sum(is_active_status == 1, na.rm = TRUE),  # Count only active doctors
+    prop_incorp = total_incorp / total_doctors  # Compute proportion
+  ) %>%
+  ungroup()
+
+expanded_doctors_cohort_prop <- expanded_doctors_cohort_prop %>%
+  filter(years >= 2000 & years <= 2024) %>%
+  drop_na(cohort)  # Ensure necessary data is present
+
+
+ggplot(expanded_doctors_cohort_prop, aes(x = years, y = prop_incorp, color = as.factor(cohort))) +
+  geom_line(linewidth = 1) +  # Line plot
+  geom_point() +  # Add points to the line
+  labs(
+    title = "Proportion of Incorporated Doctors per Active Cohort Over Time",
+    x = "Year",
+    y = "% of Incorporated Doctors",
+    color = "Graduation Cohort"
+  ) +
+  scale_y_continuous(labels = percent) +  # Format y-axis as percentages
+  theme_minimal()
+
+```
+This is not informative since there is lacking of any expiration of incorporation.
+
+
+```{r}
+doctors_chort_five <- expanded_doctors %>%
+  mutate(cohort = cut(educ_year, 
+                      breaks = seq(1950, 2030, by = 5),  
+                      labels = paste0(seq(1950, 2025, by = 5), "-", seq(1954, 2029, by = 5)),
+                      include.lowest = TRUE))
+
+doctors_chort_five_counts  <- doctors_chort_five %>%
+  drop_na(cohort) %>%
+  filter(years >= 2000 & years <= 2024) %>% 
+  group_by(cohort, years) %>%
+  summarise(total_incorp = sum(is_incorp_status, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot total incorporated doctors by cohort over time
+ggplot(doctors_chort_five_counts, aes(x = years, y = total_incorp, color = as.factor(cohort))) +
+  geom_line(linewidth = 1) +  # Line plot
+  geom_point() +  # Add points to the line
+  labs(
+    title = "Total Incorporated Doctors per Cohort Over Time",
+    x = "Year",
+    y = "Total Incorporated Doctors",
+    color = "Graduation Cohort"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+
+```{r}
+# Step 3: Summarize incorporation over time for each cohort
+doctors_chort_five_prop <- doctors_chort_five %>%
+  group_by(cohort, years) %>%
+  summarise(
+    total_incorp = sum(is_incorp_status, na.rm = TRUE),  # Count incorporated doctors
+    total_doctors = sum(is_active_status == 1, na.rm = TRUE),  # Count only active doctors
+    prop_incorp = total_incorp / total_doctors  # Compute proportion
+  ) %>%
+  ungroup()
+  
+doctors_chort_five_prop <- doctors_chort_five_prop %>%
+  filter(years >= 2000 & years <= 2024) %>%
+  drop_na(cohort)  # Ensure necessary data is present
+
+
+# Step 5: Plot cumulative incorporations over time by cohort
+ggplot(doctors_chort_five_prop, aes(x = years, y = prop_incorp, color = cohort, group = cohort)) +
+  geom_line(linewidth = 1) +  # Line plot
+  geom_point() +  # Add points to the line
+  labs(
+    title = "Proportion of Incorporated Doctors per Active Cohort Over Time",
+    x = "Year",
+    y = "% of Incorporated Doctors",
+    color = "Graduation Cohort"
+  ) +
+  scale_y_continuous(labels = percent) +  # Format y-axis as percentages
+  theme_minimal()
+
+```
+
+```{r}
+incorp_doctors <- all_doctors %>%
+  mutate(incorp_year = as.numeric(format(as.Date(corporation_date, format = "%Y-%m-%d"), "%Y"))) %>%
+  filter(is_incorp == 1) %>%
+  mutate(incorp_after_med_school = incorp_year - educ_year) %>%
+  drop_na(educ_year) %>%  # Ensure necessary data is present
+  mutate(cohort = cut(educ_year, 
+                      breaks = seq(1950, 2030, by = 10),  # 10-year bins
+                      labels = paste0(seq(1950, 2020, by = 10), "-", seq(1959, 2029, by = 10)),
+                      include.lowest = TRUE))
+
+
+avg_incorp_by_cohort <- incorp_doctors %>%
+  group_by(cohort) %>%
+  summarise(avg_years_to_incorp = mean(incorp_after_med_school, na.rm = TRUE)) %>% 
+  drop_na(avg_years_to_incorp) %>%  # Ensure necessary data is present
+  ungroup()
+
+# Step 3: Create the bar chart
+ggplot(avg_incorp_by_cohort, aes(x = cohort, y = avg_years_to_incorp, fill = cohort)) +
+  geom_col() +  # Creates a bar chart
+  geom_text(aes(label = round(avg_years_to_incorp, 1)), vjust = -0.5) +  # Adds labels above bars
+  labs(title = "Average Years to Incorporation After Med School by 10 Year Cohort",
+       x = "Cohort",
+       y = "Average Years to Incorporation") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Hide legend since fill is same as x-axis
+
+```
+Some of the averages include negative values pulling down the average. This is due to new doctors joining incorporated practice that where incorporated before they graduated med school. There are negative values for only 48 of the doctors. 
+
+
+
+```{r}
+#add column for whether they're active or inactive
+
+all_doctors_raw <- all_doctors_raw %>%
+  mutate(is_active = ifelse(is.na(expired_date), 1, 0))
+
+active_doctors <- all_doctors_raw %>%
+  mutate(active_year = as.numeric(format(as.Date(active_member, format = "%Y-%m-%d"), "%Y")))
+
+active_doctors$gap = active_doctors$active_year - active_doctors$educ_year
+
+
+#print(median(active_doctors$gap, na.rm = TRUE))
+#print(mean(active_doctors$gap, na.rm = TRUE))
+
+gap_df <- active_doctors %>%
+  filter(is_active == 1) %>%
+  drop_na(gap) %>%
+  group_by(gap) %>%
+  summarise(count = n()) %>%
+  ungroup() %>%
+  mutate(prop = round(count / sum(count), 2)) %>%
+  arrange(desc(prop)) %>%
+  slice(1:11) %>%
+  arrange(gap)
+
+kable(gap_df)
+```
+
+The average amount of time for a doctor to become active after med school is 5.4 years, and the median is 2 years. 
+
+```{r}
+
+both_doctors <- all_doctors_raw %>%
+  rename("corporation_date" = "corporation_date_1") %>%
+  rename("expired_corporation_date" = "expired_corporation_date_1") %>%
+  rename("left_corporation" = "left_corporation_1") %>%
+  rename("corporation_name" = "corporation_name_1") %>%
+  mutate(expired_year = as.numeric(format(as.Date(expired_date, format = "%Y-%m-%d"), "%Y"))) %>%
+  mutate(active_year = as.numeric(format(as.Date(active_member, format = "%Y-%m-%d"), "%Y"))) %>%
+  mutate(left_corp_year = as.numeric(format(as.Date(left_corporation, format = "%Y-%m-%d"), "%Y"))) %>%
+  mutate(incorp_year = as.numeric(format(as.Date(corporation_date, format = "%Y-%m-%d"), "%Y"))) %>%
+  mutate(expired_corp_year = as.numeric(format(as.Date(expired_corporation_date, format = "%Y-%m-%d"), "%Y")))
+
+#removing the date columns that have a year column
+both_doctors <- both_doctors %>%
+  select(-c(expired_date, corporation_date, active_member, left_corporation, corporation_date, expired_corporation_date))
+
+#the next best thing to when a doctor became active is when they graduated med school
+both_doctors = both_doctors %>%
+  mutate(active_year = coalesce(active_year, educ_year)) #uses educ_year if active_year is NA
+
+#add a binary for has corporation and counts for other columns 
+both_doctors <- both_doctors %>%
+  mutate(has_corp = ifelse(!is.na(corporation_name) | !is.na(expired_corp_year) | !is.na(left_corp_year), 1, 0)) %>% #has ever incorporated
+  mutate(corp_count = rowSums(!is.na(across(starts_with("corp_address"))))) %>%
+  mutate(shareholder_count = rowSums(!is.na(across(starts_with("corporate_shareholders"))))) %>%
+  mutate(hospital_count = rowSums(!is.na(across(starts_with("hospital_privileges")))))
+
+
+#if there is value for active year, but not expired year, set expired year to 2025 (they're still active to this day)
+both_doctors <- both_doctors %>%
+  mutate(expired_year = ifelse(!is.na(active_year) & is.na(expired_year), 2025, expired_year)) #if there is active year, set expired year to 2025
+
+#if there is a value for incorp year, but not expired corp year, set expired corp year to 2025 (they're still active to this day)
+both_doctors <- both_doctors %>%
+  mutate(expired_corp_year = ifelse(!is.na(incorp_year) & is.na(expired_corp_year), 2025, expired_corp_year))
+
+both_doctors <- both_doctors %>%
+  mutate(expired_corp_year = ifelse(!is.na(incorp_year) & is.na(left_corp_year), 2025, left_corp_year))
+
+
+#dropping unused columns after they were added to counts
+both_doctors <- both_doctors %>%
+  select(-c(starts_with("corporate_shareholders"), starts_with("corporate_shareholders"), starts_with("corp_address"),    starts_with("hospital_privileges"), starts_with("specialties")))
+
+#print(sum(!is.na(both_doctors$left_corporation)))
+
+
+
+# Expand the dataset
+both_doctors <- both_doctors %>%
+  drop_na(expired_year, active_year) %>%  # Ensure necessary data is present
+  rowwise() %>%
+  mutate(years = list(seq(active_year, as.integer(expired_year)))) %>%  # Create a sequence of years, from when they start to experation
+  unnest(years)
+
+both_doctors <- both_doctors %>%
+  mutate(is_active_status = ifelse(years >= active_year & years <= expired_year, 1, 0)) %>% # Create a binary variable for active status (all 1)
+  mutate(is_incorp_status = ifelse(
+    is.na(incorp_year) | is.na(left_corp_year), 0,  # If either is NA, set to 0
+    ifelse(years >= incorp_year & years <= left_corp_year, 1, 0)  # Otherwise, apply the range condition
+  ))
+
+
+```
+
+
+
+```{r}
+#inactive doctors only
+
+inactive_doctors <- both_doctors %>%
+  filter(is_active == 0) %>%
+  drop_na(educ_year) %>%  # Ensure necessary data is present
+  mutate(cohort = cut(educ_year, 
+                      breaks = seq(1950, 2030, by = 10),  # 10-year bins
+                      labels = paste0(seq(1950, 2020, by = 10), "-", seq(1959, 2029, by = 10)),
+                      include.lowest = TRUE))
+
+inactive_doctors_counts  <- inactive_doctors %>%
+  drop_na(cohort) %>%
+  filter(years >= 1980 & years <= 2024) %>% 
+  group_by(cohort, years) %>%
+  summarise(total_incorp = sum(is_active_status, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot total incorporated doctors by cohort over time
+ggplot(inactive_doctors_counts, aes(x = years, y = total_incorp, color = as.factor(cohort))) +
+  geom_line(linewidth = 1) +  # Line plot
+  geom_point() +  # Add points to the line
+  labs(
+    title = "Number of Doctors per Cohort Over Time (Inactive Doctors)",
+    x = "Year",
+    y = "Total Inactive Doctors",
+    color = "Graduation Cohort"
+  ) +
+  theme_minimal()
+
+```
+
+This is a graph showing the history of doctors that are as of now are inactive. 
+
+
+
+```{r}
+
+##add cohort
+both_doctors_prop <- both_doctors %>%
+  mutate(cohort = cut(educ_year, 
+                      breaks = seq(1950, 2030, by = 10),  # 10-year bins
+                      labels = paste0(seq(1950, 2020, by = 10), "-", seq(1959, 2029, by = 10)),
+                      include.lowest = TRUE))
+
+
+
+#inactive doctors as a proportion of total doctors (inactive + active)
+both_doctors_prop <- both_doctors_prop %>%
+  drop_na(cohort) %>%  # Ensure necessary data is present
+  group_by(cohort, years) %>%
+  summarise(
+    inactive_doctors_total = sum(is_active == 0, na.rm = TRUE),  # Count inactive doctors
+    active_total_cohort = sum(is_active_status == 1, na.rm = TRUE)  # Active within cohort
+  ) %>%
+  ungroup() %>%
+  group_by(years) %>%  # Now group only by years
+  mutate(active_total_doctors = sum(active_total_cohort, na.rm = TRUE)) %>%  # Sum across cohorts
+  ungroup() %>%
+  mutate(inactive_prop = inactive_doctors_total / active_total_doctors) %>%  # Compute proportion
+  filter(years >= 1980 & years <= 2024)
+
+
+ggplot(both_doctors_prop, aes(x = years, y = inactive_prop, color = as.factor(cohort))) +
+  geom_line(linewidth = 1) +  # Line plot
+  geom_point() +  # Add points to the line
+  labs(
+    title = "Proportion of Inactive Doctors to Total Doctors per Cohort",
+    x = "Year",
+    y = "Proportion of Inactive Doctors to Total Docotrs",
+    color = "Graduation Cohort"
+  ) +
+  theme_minimal()
+
+```
+
+An inactive doctor is a doctor that is no longer active as of when the data was collected. So this is showing an inactive doctor today, when they were active in the past. All the lines trend to zero due to active doctors will be a larger and large amount the closer you get to the present. 
+
+
+```{r}
+#share of doctors with a corp listed
+
+inactive_doctors_corp <- both_doctors %>%
+  filter(is_active == 0) %>% #all inactive doctors only
+  drop_na(educ_year) %>%  # Ensure necessary data is present
+  mutate(cohort = cut(educ_year, 
+                      breaks = seq(1950, 2030, by = 10),  # 10-year bins
+                      labels = paste0(seq(1950, 2020, by = 10), "-", seq(1959, 2029, by = 10)),
+                      include.lowest = TRUE))
+
+inactive_doctors_corp_prop  <- inactive_doctors_corp %>%
+  drop_na(cohort) %>%
+  filter(years >= 2000 & years <= 2024) %>%
+  group_by(cohort, years) %>%
+  summarise(
+    total_doctors_cohort = sum(is_active == 0, na.rm = TRUE),  # Count inactive doctors within cohort
+    with_corp_count = sum(has_corp == 1, na.rm = TRUE)  # Count corp within cohort
+  ) %>%
+  ungroup() %>%
+  group_by(years) %>%  # Now group only by years
+  mutate(inactive_total_doctors = sum(total_doctors_cohort, na.rm = TRUE)) %>%  # Sum across cohorts
+  mutate(with_corp_prop = with_corp_count / inactive_total_doctors)  # Compute proportion
+
+
+# Plot total incorporated doctors by cohort over time
+ggplot(inactive_doctors_corp_prop, aes(x = years, y = with_corp_prop, color = as.factor(cohort))) +
+  geom_line(linewidth = 1) +  # Line plot
+  geom_point() +  # Add points to the line
+  labs(
+    title = "Proportion of Inactive Doctors with a Corporation",
+    x = "Year",
+    y = "Proportion",
+    color = "Graduation Cohort"
+  ) +
+  theme_minimal()
+
+
+```
+An inactive doctor counts as having a corporation if they have a corporation name, ever left a corporation or have an expiration date for their corporation. The proportion is how many doctors within a cohort that ever had a corporation divided by all active doctors at the time (who no longer practice today).
+
+
+
+```{r}
+# number of doctors with the same corporation listed
+
+```
+
+

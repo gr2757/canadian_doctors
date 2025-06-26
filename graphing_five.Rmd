@@ -1,0 +1,330 @@
+---
+title: "Canadian Doctors Iteration 5"
+output:
+  pdf_document: default
+  html_notebook: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales)  # Load the scales package for percentage formatting
+library(knitr)
+library(stringr)
+
+if(Sys.info()['user']=='gr2757') {
+  
+  Project <- "/Users/gr2757/Dropbox/CPSO/output"
+}
+
+if(Sys.info()['user']=='T-800 Model 101') {
+  
+  Project <- "D:/Dropbox/CPSO/output"
+}
+
+all_doctors_path = file.path(Project, "all_doctors_data_three.csv")
+
+all_doctors_raw = read.csv(all_doctors_path, stringsAsFactors = FALSE)
+all_doctors_raw[all_doctors_raw == ""] <- NA
+
+#setwd("D:/Dropbox/CPSO/graphing")
+
+```
+
+
+
+```{r}
+
+#make some counts and drop the multiple columns
+clean_all_doctors  = all_doctors_raw %>%
+  mutate(count_specialties = rowSums(!is.na(across(starts_with("specialties"))))) %>% 
+  select(-starts_with("specialties")) %>%
+  mutate(count_hospital_privileges = rowSums(!is.na(across(starts_with("hospital_privileges"))))) %>%
+  select(-starts_with("hospital_privileges")) %>%
+  mutate(count_corp_address = rowSums(!is.na(across(starts_with("corp_address"))))) %>%
+  select(-starts_with("corp_address")) %>%
+  mutate(count_corporation = rowSums((!is.na(across(starts_with("corporation_name"))))))
+
+#create a variable for whether a doctor is active and has a corporation
+clean_all_doctors = clean_all_doctors %>%
+  mutate(is_active = ifelse(is.na(expired_date), 1, 0)) %>%
+  mutate(has_incorp = ifelse(!is.na(corporation_name_1), 1,0))
+
+#replace doctor names in listed shareholders with just CPSO#
+clean_all_doctors <- clean_all_doctors %>%
+  mutate(across(starts_with("corporate_shareholder"), 
+                ~ as.numeric(gsub("[^0-9]", "", .))))
+
+  
+```
+
+```{r}
+#making a data set to deal with corporations:
+corporation_df = clean_all_doctors %>%
+  filter(has_incorp == 1) %>% #only doctor with a corporation
+  filter(is_active == 1) %>% #only active doctors
+  select(matches("^corporate_shareholders|^corporation_name|^left_corporation"), cpso)
+
+
+df_long_corporations <- corporation_df %>%
+  select(cpso, starts_with("corporation_name"), starts_with("left_corporation")) %>%
+  pivot_longer(
+    cols = c(starts_with("corporation_name"), starts_with("left_corporation")),
+    names_to = c(".value", "corporation_number"),
+    names_pattern = "(corporation_name|left_corporation)_(\\d+)"
+  ) %>%
+  drop_na(corporation_name)%>%
+  rename(corporation = corporation_name) %>%
+  filter(is.na(left_corporation)) %>% # Drop rows where they left the corporation
+  select(-left_corporation) # Drop the left_corporation column
+
+# Reshape shareholder columns into long format, handling multiple shareholder columns per corporation
+df_long_shareholders <- corporation_df %>%
+  select(cpso, starts_with("corporate_shareholders")) %>%
+  pivot_longer(
+    cols = starts_with("corporate_shareholders"),
+    names_to = c("corporation_number", "shareholder_number"),
+    names_pattern = "corporate_shareholders_(\\d+)_(\\d+)",  # Pattern to capture both corporation and shareholder numbers
+    values_to = "shareholder"
+  ) %>%
+  drop_na(shareholder)  # Drop rows where no shareholder is listed
+
+
+# Combine the reshaped corporation and shareholder data
+df_combined <- left_join(df_long_corporations, df_long_shareholders, by = c("corporation_number", "cpso"))
+
+#only keep cpso corporation and shareholder
+df_combined <- df_combined %>% 
+  select(cpso, corporation, shareholder)
+
+#this so that every doctor that lists a firm is also treated as a shareholder
+cpso_shareholder <- df_combined %>%
+  select(-shareholder) %>% #drop the current shareholder
+  mutate(shareholder = cpso) #use the cpso as a shareholder 
+
+df_combined = rbind(df_combined, cpso_shareholder) #add a lot duplicates
+
+df_combined <- df_combined %>%
+  distinct(corporation, shareholder, .keep_all = FALSE) %>% #remove the duplicates, so now firms that had NA but did have a listed doctor as a cpso now carry that value as a shareholder
+  drop_na(shareholder)
+
+#this is all to count how many shareholders a corporation has.
+corp_count = df_combined %>%
+  group_by(corporation) %>% #group by name
+  mutate(shareholder_count = n()) #count how many times that name shoes up
+
+
+```
+
+```{r}
+# count how many shareholders per corporation by corporation name and ignoring corporate shareholders.
+
+long_corp_two = corporation_df %>%
+  select(cpso, starts_with("corporation_name"), starts_with("left_corporation")) %>%
+  pivot_longer(
+    cols = c(starts_with("corporation_name"), starts_with("left_corporation")),
+    names_to = c(".value", "corporation_number"),
+    names_pattern = "(corporation_name|left_corporation)_(\\d+)"
+  ) %>%
+  drop_na(corporation_name)%>%
+  rename(corporation = corporation_name) %>%
+  filter(is.na(left_corporation)) %>% # Drop rows where they left the corporation
+  select(-c(left_corporation, corporation_number)) # Drop the left_corporation column
+
+#long_shareholders_two = corporation_df %>%
+#  select(cpso, starts_with("corporation_name")) %>%
+#  pivot_longer(
+#    cols = starts_with("corporation_name"),
+#    names_to = ("corporation_number"),
+#    names_pattern = "corporation_name_(\\d+)",  # Pattern to capture both corporation and shareholder numbers
+#  ) %>%
+#  rename(corporation = value)
+
+long_shareholders_two <- corporation_df %>%
+  select(cpso, starts_with("corporation_name")) %>%
+  pivot_longer(
+    cols = starts_with("corporation_name"),
+    values_to = "corporation_name"   # This will capture the corporation names in a new column
+  ) %>%
+  filter(!is.na(corporation_name)) %>%
+  rename(corporation = corporation_name) %>%# Rename the column to corporation
+  select(-name)
+
+combined_df_two = left_join(long_corp_two, long_shareholders_two, by = c("cpso", "corporation"))
+
+combined_df_two = combined_df_two %>% 
+  group_by(corporation) %>% #group by name
+  mutate(shareholder_count = n()) %>% #count how many times that name shoes up
+  distinct(corporation, shareholder_count) #drop duplicates, one observation per corporation.
+```
+
+```{r}
+#make a table showing this
+table_df = combined_df_two %>%
+  group_by(shareholder_count) %>%
+  summarise(count = n()) %>%
+  mutate(percentage =  round(count / nrow(combined_df_two), 4)) %>%
+  arrange(shareholder_count)
+  
+  
+  
+kable(table_df)
+
+```
+
+```{r}
+gender_specialties = all_doctors_raw %>%
+  select(gender, specialties_1, cpso, active_member) %>%
+  filter(!is.na(specialties_1)) %>%
+  filter(!is.na(active_member)) %>%
+  filter(!gender == "Unknown") %>%
+  mutate(is_women = ifelse(gender == "Female", 1, 0)) %>%
+  group_by(specialties_1) %>%
+  mutate(specialty_count = n()) %>%
+  ungroup()
+
+ 
+gender_specialties = gender_specialties %>%
+  group_by(specialties_1, gender) %>%
+  mutate(women_count = n()) %>%
+  ungroup() %>%
+  filter(gender == "Female") %>%
+  distinct(specialties_1, .keep_all = TRUE) %>%
+  mutate(percentage = round(women_count / specialty_count * 100, 2)) %>%
+  select(c(specialties_1, women_count, specialty_count, percentage)) %>%
+  arrange(desc(percentage))
+
+
+
+kable(gender_specialties)
+
+
+
+```
+
+
+```{r}
+#gender cohort
+gender_cohort <- all_doctors_raw %>%
+  select(cpso, educ_year, gender, active_member) %>%
+  filter(!is.na(active_member)) %>%
+  drop_na(educ_year) %>%  # Ensure necessary data is present
+  mutate(cohort = cut(educ_year, 
+                      breaks = seq(1950, 2030, by = 5),  
+                      labels = paste0(seq(1950, 2025, by = 5), "-", seq(1954, 2029, by = 5)),
+                      include.lowest = TRUE)) %>%
+  drop_na(cohort) %>%
+  select(-c(educ_year, active_member)) %>%
+  group_by(cohort) %>%
+  mutate(cohort_count = n()) %>%
+  ungroup()
+
+gender_cohort = gender_cohort %>%
+  group_by(cohort, gender) %>%
+  mutate(women_cohort_count = n()) %>%
+  ungroup() %>%
+  filter(gender == "Female") %>%
+  distinct(cohort, .keep_all = TRUE) %>%
+  mutate(percentage = round(women_cohort_count / cohort_count * 100, 2)) %>%
+  select(cohort, cohort_count, women_cohort_count, percentage) %>%
+  arrange(desc(percentage))
+
+kable(gender_cohort)
+
+
+```
+
+```{r}
+#same last name and same corporation 
+family_corporations = all_doctors_raw %>%
+  select(name, cpso, active_member, educ_year, gender, specialties_1) %>%
+  drop_na(name, cpso, active_member) %>%
+  mutate(last_name = str_extract(name, "^[^,]+")) %>%
+  select(-active_member)
+
+family_long_corp = long_corp_two %>%
+  group_by(corporation) %>%
+  mutate(owner_count = n())
+
+family_corporations = left_join(family_corporations, family_long_corp, by =  c("cpso"))
+
+family_corporations <- family_corporations %>%
+  drop_na(corporation) %>%
+  group_by(last_name, corporation) %>%
+  mutate(family_corp = ifelse(
+    n_distinct(cpso) > 1 & 
+    owner_count == 2 & 
+    any(gender == "Male") & 
+    any(gender == "Female") & 
+    (max(educ_year) - min(educ_year) <= 10),  # Education year gap condition
+    1, 0
+  )) %>%
+  ungroup() %>%
+  filter(family_corp == 1)
+
+duplicates_df <- family_corporations %>%
+  group_by(cpso) %>%
+  filter(n() > 1) %>%  # Keep only names that appear more than once
+  ungroup()
+  
+
+#here is to see the most common specialties for family corporations
+family_specialties = family_corporations %>%
+  group_by(specialties_1) %>%
+  mutate(specialties_count = n()) %>%
+  ungroup() %>%
+  distinct(specialties_1, .keep_all = TRUE) %>% 
+  select(specialties_1, specialties_count)
+
+#see how many have the same specialty 
+same_speciality <- family_corporations %>%
+  filter(family_corp == 1) %>%
+  group_by(corporation) %>%
+  mutate(same_specialty = ifelse(n_distinct(specialties_1) == 1, 1, 0)) %>%
+  ungroup()
+
+same_speciality_prop = (sum(same_speciality$same_specialty == 1)/ nrow(same_speciality))
+
+#here is to see all corporations that are considered family practices
+family_corp_distinct = family_corporations %>%
+  distinct(corporation, last_name, .keep_all = TRUE) %>%
+  select(-c(cpso, specialties_1, educ_year, name, gender))
+
+#here is to see all doctors that are in a family practice
+family_doctors_distinct = family_corporations %>%
+  distinct(cpso, .keep_all = TRUE)
+
+#here is all corporations
+total_corps = long_corp_two %>%
+  distinct(corporation, .keep_all =  TRUE)
+
+total_family_corps = sum(family_corp_distinct$family_corp == 1) #total family corporations
+total_active_doctors = sum(!is.na(clean_all_doctors$active_member)) # total active doctors
+total_family_doctors = sum(family_doctors_distinct$family_corp == 1) #total active doctors that are in family coprs
+total_corps = nrow(total_corps) #total corporations
+
+```
+
+## Summary Stats on *Family Practices*
+
+-   **Total Family Practices:** 166\
+-   **Doctors in Family Practices:** 316\
+-   **Percentage of Corporations that are Family Practices:** **0.80%**\
+-   **Percentage of Active Doctors in a Family Practice:** **0.86%**
+
+### **Top Specialties in Family Practices**
+
+1.  **Family Medicine** – 139\
+2.  **Internal Medicine** – 38\
+3.  **Pediatrics** – 21\
+4.  **Anesthesiology** – 17\
+5.  **Psychiatry** – 17
+
+**Family Practices where Both Doctors Share the Same Specialty:** **28.3%**
