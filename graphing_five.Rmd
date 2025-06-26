@@ -21,20 +21,15 @@ library(stringr)
 
 if(Sys.info()['user']=='gr2757') {
   
-  Project <- "/Users/gr2757/Dropbox/CPSO/output"
+  Project <- "/####/Dropbox/CPSO/output"
 }
 
-if(Sys.info()['user']=='T-800 Model 101') {
-  
-  Project <- "D:/Dropbox/CPSO/output"
-}
+
 
 all_doctors_path = file.path(Project, "all_doctors_data_three.csv")
 
 all_doctors_raw = read.csv(all_doctors_path, stringsAsFactors = FALSE)
 all_doctors_raw[all_doctors_raw == ""] <- NA
-
-#setwd("D:/Dropbox/CPSO/graphing")
 
 ```
 
